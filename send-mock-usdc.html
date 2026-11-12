@@ -91,6 +91,27 @@ const logBox = $("log");
 let provider = null;      // provider aktif (WalletConnect / injected)
 let providerKind = "";    // "walletconnect" | "injected"
 let account = null;
+let sessionChainId = null; // chain yang benar-benar ada di sesi wallet
+
+// Baca chain aktif sesi wallet. Wallet ini menolak ganti chain via
+// WalletConnect (wallet_switch/addEthereumChain tidak tersedia), jadi halaman
+// harus tanda tangan di chain yang memang ada di sesi — BUKAN memaksa 421614.
+async function detectSessionChain() {
+  try {
+    if (provider && provider.chainId !== undefined && provider.chainId !== null) {
+      const c = Number(provider.chainId);
+      if (Number.isFinite(c) && c > 0) { sessionChainId = c; log("Chain sesi (properti provider): " + c); }
+    }
+  } catch (e) {}
+  try {
+    const hex = await provider.request({ method: "eth_chainId", params: [] });
+    const c = parseInt(hex, 16);
+    if (Number.isFinite(c) && c > 0) { sessionChainId = c; log("Chain sesi (eth_chainId): " + c); }
+  } catch (e) {
+    log("eth_chainId tidak bisa dibaca (" + (e && e.message ? e.message : e) + ").");
+  }
+  if (sessionChainId) log("Tanda tangan akan diminta di chain sesi " + sessionChainId + " — domain EIP-712 tetap 421614 (Arbitrum Sepolia).", "ok");
+}
 
 function log(html, cls) {
   const d = document.createElement("div");
@@ -207,11 +228,13 @@ async function connectWalletConnect() {
   });
   provider.on("disconnect", () => { log("Wallet disconnect.", "err"); resetUi(); });
   provider.on("accountsChanged", (accs) => { if (accs && accs[0]) setConnected(accs[0], "walletconnect"); });
+  provider.on("chainChanged", (c) => { sessionChainId = Number(c); log("Chain berubah: " + c); });
   await provider.enable();
   const accs = await provider.request({ method: "eth_accounts", params: [] });
   if (!accs || !accs[0]) throw new Error("Tidak ada alamat wallet yang terhubung.");
   setConnected(accs[0], "walletconnect");
   log("Connect WalletConnect berhasil.", "ok");
+  await detectSessionChain();
 }
 
 async function connectInjected() {
@@ -226,6 +249,7 @@ async function connectInjected() {
   }
   setConnected(accs[0], "injected");
   log("Connect injected berhasil.", "ok");
+  await detectSessionChain();
 }
 
 function resetUi() {
@@ -247,27 +271,19 @@ async function sendMockUsdc() {
     const timeMs = Date.now(); // dipakai sebagai action.time SEKALIGUS nonce (sama seperti SDK)
     const typedData = buildTypedData(timeMs);
     $("typedPreview").textContent = JSON.stringify(typedData, null, 2);
-    // Domain EIP-712 memakai chainId 421614 (Arbitrum Sepolia) — pastikan
-    // wallet aktif di chain itu sebelum minta tanda tangan. Best-effort saja:
-    // kalau wallet menolak/tidak mendukung, lanjut saja (domain sudah membawa chainId).
-    try {
-      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x66eee" }] });
-    } catch (sw) {
-      try {
-        await provider.request({
-          method: "wallet_addEthereumChain",
-          params: [{ chainId: "0x66eee", chainName: "Arbitrum Sepolia", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: ["https://sepolia-rollup.arbitrum.io/rpc"], blockExplorerUrls: ["https://sepolia.arbiscan.io"] }],
-        });
-      } catch (sw2) {
-        log("Ganti chain otomatis gagal (" + (sw2 && sw2.message ? sw2.message : sw2) + ") — lanjut tanda tangan apa adanya.", "err");
-      }
-    }
-    log("Meminta tanda tangan EIP-712 ke wallet… (cek aplikasi wallet kamu)");
-    const sig = await provider.request({
+    // Tanda tangan diminta di chain yang ADA di sesi wallet (bukan memaksa
+    // 421614): wallet ini tidak mendukung ganti chain via WalletConnect dan
+    // validasi sesi menolak chain yang tidak ada di sesi. Domain EIP-712 di
+    // dalam data tetap 421614 — itulah yang diverifikasi Hyperliquid, jadi
+    // tanda tangan tetap valid meski diminta lewat chain lain.
+    if (!sessionChainId) await detectSessionChain();
+    const reqArgs = {
       method: "eth_signTypedData_v4",
       params: [account, JSON.stringify(typedData)],
-      chainId: 421614,
-    });
+    };
+    if (sessionChainId) reqArgs.chainId = sessionChainId;
+    log("Meminta tanda tangan EIP-712 ke wallet… (cek aplikasi wallet kamu)");
+    const sig = await provider.request(reqArgs);
     if (typeof sig !== "string" || sig.length !== 132) throw new Error("Tanda tangan tidak valid dari wallet: " + String(sig));
     log("Tanda tangan diterima: <span class='mono'>" + sig.slice(0, 20) + "…</span>", "ok");
     const payload = buildPayload(timeMs, sig);
