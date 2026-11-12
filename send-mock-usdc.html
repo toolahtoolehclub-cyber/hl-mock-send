@@ -63,7 +63,7 @@
   <button class="ghost" id="btnDisableUnified">Matikan unified account</button>
 
   <h2>Langkah 2b — Pindah 500 ke Perps</h2>
-  <p class="step">999 mock USDC kamu ada di <b>Spot</b>, tapi kirim antar-akun (usdSend) mengambil dari saldo <b>Perps</b> — Perps kamu 0, makanya API menjawab "Insufficient balance for withdrawal." Pindahkan dulu 500 dari Spot ke Perps dengan satu tanda tangan.</p>
+  <p class="step">Tombol ini memindahkan 500 mock USDC dari Spot ke Perps (satu tanda tangan). Hanya perlu dipakai kalau saldo Perps masih 0 — kalau Spot sudah di bawah 500, tombol ini terkunci otomatis, langsung lanjut ke tombol Kirim di bawah.</p>
   <button class="ghost" id="btnMoveToPerp">Pindah 500 ke Perps</button>
 
   <h2>Langkah 2 — Periksa &amp; kirim</h2>
@@ -456,8 +456,41 @@ function buildClassTransferTypedData(timeMs) {
   };
 }
 
+// ===== Kunci tombol Pindah kalau Spot < 500 (sudah pindah / saldo tidak cukup) =====
+// Cek saldo Spot pengirim lewat API publik testnet (tanpa tanda tangan).
+// Dipanggil saat halaman dimuat dan sebelum meminta tanda tangan pindah.
+async function getSpotUsdc() {
+  const res = await fetch(TESTNET_API + "/info", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ type: "spotClearinghouseState", user: EXPECTED_SENDER }),
+  });
+  const data = await res.json();
+  const row = (data && data.balances || []).find(b => b.coin === "USDC");
+  return row ? parseFloat(row.total) : 0;
+}
+
+async function checkSpotAndLockMove() {
+  try {
+    const spot = await getSpotUsdc();
+    if (spot < 500) {
+      $("btnMoveToPerp").disabled = true;
+      $("btnMoveToPerp").textContent = "Pindah sudah selesai (Spot " + spot + " < 500)";
+      log("Spot USDC pengirim: " + spot + " — tombol 'Pindah 500 ke Perps' dikunci, karena pindah sudah selesai / saldo Spot tidak cukup. Langsung tap 'Kirim 500 mock USDC'.");
+      return false;
+    }
+    return true;
+  } catch (e) {
+    log("Tidak bisa cek saldo Spot (" + (e && e.message ? e.message : String(e)) + ") — tombol Pindah tetap aktif.", "err");
+    return true;
+  }
+}
+
 async function moveToPerp() {
   if (!provider || !account) { log("Belum connect wallet.", "err"); return; }
+  // Jangan minta tanda tangan kalau Spot sudah < 500 — pasti ditolak API.
+  const spotOk = await checkSpotAndLockMove();
+  if (!spotOk) return;
   $("btnMoveToPerp").disabled = true;
   $("btnMoveToPerp").textContent = "Meminta tanda tangan…";
   try {
@@ -622,6 +655,8 @@ if (window.ethereum) {
   $("btnInjected").style.display = "block";
   log("Wallet terdeteksi di browser ini — kamu bisa pakai tombol 'Gunakan wallet browser ini' atau tetap WalletConnect.");
 }
+// Cek saldo Spot saat halaman dimuat — kunci tombol Pindah kalau sudah < 500.
+checkSpotAndLockMove();
 log("Halaman siap. Langkah 1: connect wallet.");
 </script>
 </body>
