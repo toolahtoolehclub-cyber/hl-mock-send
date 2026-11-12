@@ -125,6 +125,37 @@ async function detectSessionChain() {
   if (sessionChainId) log("Tanda tangan akan diminta di chain sesi " + sessionChainId + " — domain EIP-712 tetap 421614 (Arbitrum Sepolia).", "ok");
 }
 
+// Pindah wallet ke Arbitrum Sepolia (421614) sebelum tanda tangan.
+// OKX menolak tanda tangan EIP-712 kalau domain chainId (421614) tidak sama
+// dengan jaringan aktif wallet ("Provided chainId must match the active
+// chainId"). Lewat WalletConnect metode ini tidak tersedia; lewat browser
+// bawaan wallet (injected) cara ini jalan.
+async function ensureArbitrumSepolia() {
+  try {
+    await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x66eee" }] });
+    log("Wallet pindah ke Arbitrum Sepolia.", "ok");
+    return true;
+  } catch (sw) {
+    const code = sw && sw.code;
+    if (code === 4902) {
+      try {
+        await provider.request({
+          method: "wallet_addEthereumChain",
+          params: [{ chainId: "0x66eee", chainName: "Arbitrum Sepolia", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: ["https://sepolia-rollup.arbitrum.io/rpc"], blockExplorerUrls: ["https://sepolia.arbiscan.io"] }],
+        });
+        await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x66eee" }] });
+        log("Arbitrum Sepolia ditambahkan & wallet pindah ke sana.", "ok");
+        return true;
+      } catch (e2) {
+        log("Gagal tambah/pindah jaringan: " + (e2 && e2.message ? e2.message : e2), "err");
+        return false;
+      }
+    }
+    log("Ganti jaringan tidak didukung wallet ini (" + (sw && sw.message ? sw.message : sw) + ").", "err");
+    return false;
+  }
+}
+
 function log(html, cls) {
   const d = document.createElement("div");
   if (cls) d.className = cls;
@@ -216,6 +247,9 @@ function setConnected(addr, kind) {
   }
   const preview = buildTypedData(Date.now());
   $("typedPreview").textContent = JSON.stringify(preview, null, 2);
+  if (kind === "walletconnect" && window.ethereum) {
+    log("Tips: halaman ini dibuka di browser wallet — kalau kirim gagal, Disconnect lalu pakai tombol 'Gunakan wallet browser ini'.");
+  }
 }
 
 async function connectWalletConnect() {
@@ -257,6 +291,7 @@ async function connectInjected() {
   if (!accs || !accs[0]) throw new Error("Tidak ada alamat wallet yang terhubung.");
   if (provider.on) {
     provider.on("accountsChanged", (a) => { if (a && a[0]) setConnected(a[0], "injected"); });
+    provider.on("chainChanged", (c) => { sessionChainId = parseChainId(c); log("Chain berubah: " + c + " (= " + sessionChainId + ")"); });
     provider.on("disconnect", () => { log("Wallet disconnect.", "err"); resetUi(); });
   }
   setConnected(accs[0], "injected");
@@ -289,6 +324,10 @@ async function sendMockUsdc() {
     // dalam data tetap 421614 — itulah yang diverifikasi Hyperliquid, jadi
     // tanda tangan tetap valid meski diminta lewat chain lain.
     if (!sessionChainId) await detectSessionChain();
+    // Pastikan wallet di Arbitrum Sepolia sebelum tanda tangan — OKX menolak
+    // tanda tangan kalau jaringan aktifnya beda dengan domain (421614).
+    await ensureArbitrumSepolia();
+    await detectSessionChain();
     const reqArgs = {
       method: "eth_signTypedData_v4",
       params: [account, JSON.stringify(typedData)],
@@ -318,7 +357,11 @@ async function sendMockUsdc() {
       $("btnSend").textContent = "Coba kirim lagi";
     }
   } catch (e) {
-    log("Gagal: " + (e && e.message ? e.message : String(e)), "err");
+    const msg = e && e.message ? e.message : String(e);
+    log("Gagal: " + msg, "err");
+    if (msg.indexOf("must match the active chainId") !== -1) {
+      log("Wallet menolak karena jaringan aktifnya bukan Arbitrum Sepolia. Kalau connect via WalletConnect: tap Disconnect, lalu pakai tombol 'Gunakan wallet browser ini' (halaman harus dibuka di browser dalam aplikasi OKX) — halaman akan memindahkan jaringan otomatis. Kalau sudah pakai tombol itu: approve perpindahan jaringan ke Arbitrum Sepolia saat wallet memintanya.", "err");
+    }
     $("btnSend").disabled = false;
     $("btnSend").textContent = "Kirim 500 mock USDC";
   }
