@@ -93,19 +93,31 @@ let providerKind = "";    // "walletconnect" | "injected"
 let account = null;
 let sessionChainId = null; // chain yang benar-benar ada di sesi wallet
 
+// Parse chainId dari wallet: bisa "0xa4b1" (hex) ATAU "42161" (desimal tanpa 0x).
+// parseInt(x, 16) pada string desimal memberi hasil salah (42161 -> 270689).
+function parseChainId(v) {
+  if (typeof v === "number") return v;
+  if (typeof v === "string") {
+    const s = v.trim();
+    if (s.startsWith("0x") || s.startsWith("0X")) return parseInt(s, 16);
+    return parseInt(s, 10);
+  }
+  return NaN;
+}
+
 // Baca chain aktif sesi wallet. Wallet ini menolak ganti chain via
 // WalletConnect (wallet_switch/addEthereumChain tidak tersedia), jadi halaman
 // harus tanda tangan di chain yang memang ada di sesi — BUKAN memaksa 421614.
 async function detectSessionChain() {
   try {
     if (provider && provider.chainId !== undefined && provider.chainId !== null) {
-      const c = Number(provider.chainId);
+      const c = parseChainId(provider.chainId);
       if (Number.isFinite(c) && c > 0) { sessionChainId = c; log("Chain sesi (properti provider): " + c); }
     }
   } catch (e) {}
   try {
     const hex = await provider.request({ method: "eth_chainId", params: [] });
-    const c = parseInt(hex, 16);
+    const c = parseChainId(hex);
     if (Number.isFinite(c) && c > 0) { sessionChainId = c; log("Chain sesi (eth_chainId): " + c); }
   } catch (e) {
     log("eth_chainId tidak bisa dibaca (" + (e && e.message ? e.message : e) + ").");
@@ -210,8 +222,8 @@ async function connectWalletConnect() {
   log("Membuka WalletConnect…");
   provider = await EthereumProvider.init({
     projectId: WC_PROJECT_ID,
-    chains: [421614],
-    optionalChains: [42161, 1],
+    chains: [42161],
+    optionalChains: [421614, 1],
     showQrModal: true,
     rpcMap: {
       42161: "https://arb1.arbitrum.io/rpc",
@@ -228,7 +240,7 @@ async function connectWalletConnect() {
   });
   provider.on("disconnect", () => { log("Wallet disconnect.", "err"); resetUi(); });
   provider.on("accountsChanged", (accs) => { if (accs && accs[0]) setConnected(accs[0], "walletconnect"); });
-  provider.on("chainChanged", (c) => { sessionChainId = Number(c); log("Chain berubah: " + c); });
+  provider.on("chainChanged", (c) => { sessionChainId = parseChainId(c); log("Chain berubah: " + c + " (= " + sessionChainId + ")"); });
   await provider.enable();
   const accs = await provider.request({ method: "eth_accounts", params: [] });
   if (!accs || !accs[0]) throw new Error("Tidak ada alamat wallet yang terhubung.");
