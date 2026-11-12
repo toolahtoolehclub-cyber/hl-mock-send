@@ -62,6 +62,10 @@
   <p class="step">Akun testnet kamu sedang mode <b>unified account</b> — mode ini memblokir kirim USDC ke wallet lain (API menjawab "Action disabled when unified account is active"). Matikan dulu dengan satu tanda tangan. Ini HANYA mengubah pengaturan akun <b>testnet</b> (bisa diaktifkan lagi kapan saja) dan TIDAK menyentuh akun mainnet kamu.</p>
   <button class="ghost" id="btnDisableUnified">Matikan unified account</button>
 
+  <h2>Langkah 2b — Pindah 500 ke Perps</h2>
+  <p class="step">999 mock USDC kamu ada di <b>Spot</b>, tapi kirim antar-akun (usdSend) mengambil dari saldo <b>Perps</b> — Perps kamu 0, makanya API menjawab "Insufficient balance for withdrawal." Pindahkan dulu 500 dari Spot ke Perps dengan satu tanda tangan.</p>
+  <button class="ghost" id="btnMoveToPerp">Pindah 500 ke Perps</button>
+
   <h2>Langkah 2 — Periksa &amp; kirim</h2>
   <p class="step">Setelah connect, halaman memeriksa alamat wallet kamu harus sama dengan alamat pengirim di atas. Baru setelah itu tombol kirim aktif.</p>
   <button class="primary" id="btnSend" disabled>Kirim 500 mock USDC</button>
@@ -414,6 +418,106 @@ async function disableUnifiedAccount() {
   }
 }
 
+// ===== Pindah USDC Spot -> Perps — aksi usdClassTransfer (SDK exchange.py) =====
+// action: {type "usdClassTransfer", amount "500", toPerp true, nonce}
+// signature: EIP-712 "HyperliquidTransaction:UsdClassTransfer",
+//   types: hyperliquidChain:string, amount:string, toPerp:bool, nonce:uint64
+function buildClassTransferTypedData(timeMs) {
+  return {
+    domain: {
+      name: "HyperliquidSignTransaction",
+      version: "1",
+      chainId: 421614,
+      verifyingContract: "0x0000000000000000000000000000000000000000",
+    },
+    types: {
+      "HyperliquidTransaction:UsdClassTransfer": [
+        { name: "hyperliquidChain", type: "string" },
+        { name: "amount", type: "string" },
+        { name: "toPerp", type: "bool" },
+        { name: "nonce", type: "uint64" },
+      ],
+      EIP712Domain: [
+        { name: "name", type: "string" },
+        { name: "version", type: "string" },
+        { name: "chainId", type: "uint256" },
+        { name: "verifyingContract", type: "address" },
+      ],
+    },
+    primaryType: "HyperliquidTransaction:UsdClassTransfer",
+    message: {
+      hyperliquidChain: "Testnet",
+      amount: "500",
+      toPerp: true,
+      nonce: timeMs,
+      type: "usdClassTransfer",
+      signatureChainId: "0x66eee",
+    },
+  };
+}
+
+async function moveToPerp() {
+  if (!provider || !account) { log("Belum connect wallet.", "err"); return; }
+  $("btnMoveToPerp").disabled = true;
+  $("btnMoveToPerp").textContent = "Meminta tanda tangan…";
+  try {
+    await ensureArbitrumSepolia();
+    await detectSessionChain();
+    const timeMs = Date.now();
+    const typedData = buildClassTransferTypedData(timeMs);
+    log("Meminta tanda tangan EIP-712 (pindah 500 Spot -> Perps)… (cek aplikasi wallet kamu)");
+    const reqArgs = {
+      method: "eth_signTypedData_v4",
+      params: [account, JSON.stringify(typedData)],
+    };
+    if (sessionChainId) reqArgs.chainId = sessionChainId;
+    const sig = await provider.request(reqArgs);
+    if (typeof sig !== "string" || sig.length !== 132) throw new Error("Tanda tangan tidak valid dari wallet: " + String(sig));
+    log("Tanda tangan diterima: <span class='mono'>" + sig.slice(0, 20) + "…</span>", "ok");
+    const r = "0x" + sig.slice(2, 66);
+    const s = "0x" + sig.slice(66, 130);
+    let v = parseInt(sig.slice(130, 132), 16);
+    if (v < 27) v += 27;
+    const payload = {
+      action: {
+        type: "usdClassTransfer",
+        amount: "500",
+        toPerp: true,
+        nonce: timeMs,
+        signatureChainId: "0x66eee",
+        hyperliquidChain: "Testnet",
+      },
+      nonce: timeMs,
+      signature: { r, s, v },
+      vaultAddress: null,
+      expiresAfter: null,
+    };
+    $("btnMoveToPerp").textContent = "Mengirim ke API testnet…";
+    log("POST " + TESTNET_API + "/exchange");
+    const res = await fetch(TESTNET_API + "/exchange", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({ raw: "(bukan JSON)" }));
+    log("Jawaban API (mentah):");
+    logText(JSON.stringify(data, null, 2));
+    if (data && data.status === "ok") {
+      log("BERHASIL — 500 mock USDC pindah ke Perps. Sekarang tap 'Kirim 500 mock USDC'.", "ok");
+      $("btnMoveToPerp").textContent = "500 pindah ke Perps ✓";
+    } else {
+      log("API menolak / gagal. Lihat jawaban mentah di atas.", "err");
+      $("btnMoveToPerp").disabled = false;
+      $("btnMoveToPerp").textContent = "Coba pindah lagi";
+    }
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    log("Gagal: " + msg, "err");
+    $("btnMoveToPerp").disabled = false;
+    $("btnMoveToPerp").textContent = "Pindah 500 ke Perps";
+  }
+}
+
 async function sendMockUsdc() {
   if (!provider || !account) { log("Belum connect wallet.", "err"); return; }
   if (account.toLowerCase() !== EXPECTED_SENDER.toLowerCase()) { log("Alamat tidak cocok — diblokir.", "err"); return; }
@@ -461,6 +565,9 @@ async function sendMockUsdc() {
       if (data && typeof data.response === "string" && data.response.indexOf("unified account") !== -1) {
         log("Penyebab: akun testnet kamu mode unified account. Matikan dulu lewat tombol 'Matikan unified account' di atas, lalu kirim lagi.", "err");
       }
+      if (data && typeof data.response === "string" && data.response.indexOf("Insufficient balance") !== -1) {
+        log("Penyebab: 999 mock USDC kamu ada di Spot, sedangkan kirim antar-akun mengambil dari Perps (0). Pindahkan dulu 500 lewat tombol 'Pindah 500 ke Perps' di atas, lalu kirim lagi.", "err");
+      }
       $("btnSend").disabled = false;
       $("btnSend").textContent = "Coba kirim lagi";
     }
@@ -506,6 +613,7 @@ $("btnDisconnect").addEventListener("click", async () => {
 });
 $("btnSend").addEventListener("click", sendMockUsdc);
 $("btnDisableUnified").addEventListener("click", disableUnifiedAccount);
+$("btnMoveToPerp").addEventListener("click", moveToPerp);
 $("btnPing").addEventListener("click", pingApi);
 
 // Kalau halaman dibuka di dalam browser wallet (MetaMask/OKX in-app browser),
