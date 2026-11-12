@@ -189,8 +189,8 @@ async function connectWalletConnect() {
   log("Membuka WalletConnect…");
   provider = await EthereumProvider.init({
     projectId: WC_PROJECT_ID,
-    chains: [42161],
-    optionalChains: [421614, 1],
+    chains: [421614],
+    optionalChains: [42161, 1],
     showQrModal: true,
     rpcMap: {
       42161: "https://arb1.arbitrum.io/rpc",
@@ -247,10 +247,26 @@ async function sendMockUsdc() {
     const timeMs = Date.now(); // dipakai sebagai action.time SEKALIGUS nonce (sama seperti SDK)
     const typedData = buildTypedData(timeMs);
     $("typedPreview").textContent = JSON.stringify(typedData, null, 2);
+    // Domain EIP-712 memakai chainId 421614 (Arbitrum Sepolia) — pastikan
+    // wallet aktif di chain itu sebelum minta tanda tangan. Best-effort saja:
+    // kalau wallet menolak/tidak mendukung, lanjut saja (domain sudah membawa chainId).
+    try {
+      await provider.request({ method: "wallet_switchEthereumChain", params: [{ chainId: "0x66eee" }] });
+    } catch (sw) {
+      try {
+        await provider.request({
+          method: "wallet_addEthereumChain",
+          params: [{ chainId: "0x66eee", chainName: "Arbitrum Sepolia", nativeCurrency: { name: "Ether", symbol: "ETH", decimals: 18 }, rpcUrls: ["https://sepolia-rollup.arbitrum.io/rpc"], blockExplorerUrls: ["https://sepolia.arbiscan.io"] }],
+        });
+      } catch (sw2) {
+        log("Ganti chain otomatis gagal (" + (sw2 && sw2.message ? sw2.message : sw2) + ") — lanjut tanda tangan apa adanya.", "err");
+      }
+    }
     log("Meminta tanda tangan EIP-712 ke wallet… (cek aplikasi wallet kamu)");
     const sig = await provider.request({
       method: "eth_signTypedData_v4",
       params: [account, JSON.stringify(typedData)],
+      chainId: 421614,
     });
     if (typeof sig !== "string" || sig.length !== 132) throw new Error("Tanda tangan tidak valid dari wallet: " + String(sig));
     log("Tanda tangan diterima: <span class='mono'>" + sig.slice(0, 20) + "…</span>", "ok");
