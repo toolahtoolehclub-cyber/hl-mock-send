@@ -58,6 +58,10 @@
   <button class="ghost" id="btnDisconnect" style="display:none">Disconnect</button>
   <div id="accountBox" style="display:none; margin-top:10px;" class="ok"></div>
 
+  <h2>Langkah 2a — Matikan unified account (kalau perlu)</h2>
+  <p class="step">Akun testnet kamu sedang mode <b>unified account</b> — mode ini memblokir kirim USDC ke wallet lain (API menjawab "Action disabled when unified account is active"). Matikan dulu dengan satu tanda tangan. Ini HANYA mengubah pengaturan akun <b>testnet</b> (bisa diaktifkan lagi kapan saja) dan TIDAK menyentuh akun mainnet kamu.</p>
+  <button class="ghost" id="btnDisableUnified">Matikan unified account</button>
+
   <h2>Langkah 2 — Periksa &amp; kirim</h2>
   <p class="step">Setelah connect, halaman memeriksa alamat wallet kamu harus sama dengan alamat pengirim di atas. Baru setelah itu tombol kirim aktif.</p>
   <button class="primary" id="btnSend" disabled>Kirim 500 mock USDC</button>
@@ -309,6 +313,107 @@ function resetUi() {
   $("btnSend").textContent = "Kirim 500 mock USDC";
 }
 
+// ===== Matikan unified account — aksi userSetAbstraction (SDK exchange.py) =====
+// action: {type "userSetAbstraction", user, abstraction "disabled", nonce}
+// signature: EIP-712 "HyperliquidTransaction:UserSetAbstraction",
+//   types: hyperliquidChain:string, user:address, abstraction:string, nonce:uint64
+//   domain sama seperti usdSend (chainId 421614). POST sama seperti _post_action().
+function buildAbstractionTypedData(timeMs) {
+  return {
+    domain: {
+      name: "HyperliquidSignTransaction",
+      version: "1",
+      chainId: 421614,
+      verifyingContract: "0x0000000000000000000000000000000000000000",
+    },
+    types: {
+      "HyperliquidTransaction:UserSetAbstraction": [
+        { name: "hyperliquidChain", type: "string" },
+        { name: "user", type: "address" },
+        { name: "abstraction", type: "string" },
+        { name: "nonce", type: "uint64" },
+      ],
+      EIP712Domain: [
+        { name: "name", type: "string" },
+        { name: "version", type: "string" },
+        { name: "chainId", type: "uint256" },
+        { name: "verifyingContract", type: "address" },
+      ],
+    },
+    primaryType: "HyperliquidTransaction:UserSetAbstraction",
+    message: {
+      hyperliquidChain: "Testnet",
+      user: account,
+      abstraction: "disabled",
+      nonce: timeMs,
+      type: "userSetAbstraction",
+      signatureChainId: "0x66eee",
+    },
+  };
+}
+
+async function disableUnifiedAccount() {
+  if (!provider || !account) { log("Belum connect wallet.", "err"); return; }
+  $("btnDisableUnified").disabled = true;
+  $("btnDisableUnified").textContent = "Meminta tanda tangan…";
+  try {
+    await ensureArbitrumSepolia();
+    await detectSessionChain();
+    const timeMs = Date.now();
+    const typedData = buildAbstractionTypedData(timeMs);
+    log("Meminta tanda tangan EIP-712 (matikan unified account)… (cek aplikasi wallet kamu)");
+    const reqArgs = {
+      method: "eth_signTypedData_v4",
+      params: [account, JSON.stringify(typedData)],
+    };
+    if (sessionChainId) reqArgs.chainId = sessionChainId;
+    const sig = await provider.request(reqArgs);
+    if (typeof sig !== "string" || sig.length !== 132) throw new Error("Tanda tangan tidak valid dari wallet: " + String(sig));
+    log("Tanda tangan diterima: <span class='mono'>" + sig.slice(0, 20) + "…</span>", "ok");
+    const r = "0x" + sig.slice(2, 66);
+    const s = "0x" + sig.slice(66, 130);
+    let v = parseInt(sig.slice(130, 132), 16);
+    if (v < 27) v += 27;
+    const payload = {
+      action: {
+        type: "userSetAbstraction",
+        user: account.toLowerCase(),
+        abstraction: "disabled",
+        nonce: timeMs,
+        signatureChainId: "0x66eee",
+        hyperliquidChain: "Testnet",
+      },
+      nonce: timeMs,
+      signature: { r, s, v },
+      vaultAddress: null,
+      expiresAfter: null,
+    };
+    $("btnDisableUnified").textContent = "Mengirim ke API testnet…";
+    log("POST " + TESTNET_API + "/exchange");
+    const res = await fetch(TESTNET_API + "/exchange", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({ raw: "(bukan JSON)" }));
+    log("Jawaban API (mentah):");
+    logText(JSON.stringify(data, null, 2));
+    if (data && data.status === "ok") {
+      log("BERHASIL — unified account dimatikan. Sekarang tap 'Kirim 500 mock USDC'.", "ok");
+      $("btnDisableUnified").textContent = "Unified account dimatikan ✓";
+    } else {
+      log("API menolak / gagal. Lihat jawaban mentah di atas.", "err");
+      $("btnDisableUnified").disabled = false;
+      $("btnDisableUnified").textContent = "Coba matikan lagi";
+    }
+  } catch (e) {
+    const msg = e && e.message ? e.message : String(e);
+    log("Gagal: " + msg, "err");
+    $("btnDisableUnified").disabled = false;
+    $("btnDisableUnified").textContent = "Matikan unified account";
+  }
+}
+
 async function sendMockUsdc() {
   if (!provider || !account) { log("Belum connect wallet.", "err"); return; }
   if (account.toLowerCase() !== EXPECTED_SENDER.toLowerCase()) { log("Alamat tidak cocok — diblokir.", "err"); return; }
@@ -353,6 +458,9 @@ async function sendMockUsdc() {
       $("btnSend").textContent = "Terkirim ✓";
     } else {
       log("API menolak / gagal. Lihat jawaban mentah di atas. Dana TIDAK berpindah kalau status bukan ok.", "err");
+      if (data && typeof data.response === "string" && data.response.indexOf("unified account") !== -1) {
+        log("Penyebab: akun testnet kamu mode unified account. Matikan dulu lewat tombol 'Matikan unified account' di atas, lalu kirim lagi.", "err");
+      }
       $("btnSend").disabled = false;
       $("btnSend").textContent = "Coba kirim lagi";
     }
@@ -397,6 +505,7 @@ $("btnDisconnect").addEventListener("click", async () => {
   log("Disconnect.");
 });
 $("btnSend").addEventListener("click", sendMockUsdc);
+$("btnDisableUnified").addEventListener("click", disableUnifiedAccount);
 $("btnPing").addEventListener("click", pingApi);
 
 // Kalau halaman dibuka di dalam browser wallet (MetaMask/OKX in-app browser),
