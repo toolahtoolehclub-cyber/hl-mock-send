@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Kirim 500 mock USDC — Hyperliquid Testnet</title>
+<style>
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, "Segoe UI", Roboto, Arial, sans-serif; background: #0b0f14; color: #e6edf3; margin: 0; padding: 16px; line-height: 1.5; }
+  .card { max-width: 560px; margin: 0 auto; background: #111827; border: 1px solid #26303d; border-radius: 14px; padding: 18px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 18px 0 6px; color: #7ee0c3; }
+  p { margin: 6px 0; font-size: 14px; }
+  .warn { background: #3a2a00; border: 1px solid #8a6d1b; color: #ffd479; border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+  .ok { background: #062e22; border: 1px solid #14532d; color: #86efac; border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+  .err { background: #3a0d0d; border: 1px solid #7f1d1d; color: #fca5a5; border-radius: 10px; padding: 10px 12px; font-size: 13px; }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; word-break: break-all; }
+  .row { display: flex; justify-content: space-between; gap: 10px; padding: 8px 0; border-bottom: 1px solid #1f2937; font-size: 14px; }
+  .row span:first-child { color: #9ca3af; }
+  button { width: 100%; padding: 14px; margin-top: 10px; font-size: 16px; font-weight: 700; border: 0; border-radius: 12px; cursor: pointer; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .primary { background: #14b8a6; color: #042f2e; }
+  .ghost { background: #1f2937; color: #e5e7eb; }
+  .danger { background: #7f1d1d; color: #fecaca; }
+  details { margin-top: 10px; font-size: 13px; }
+  summary { cursor: pointer; color: #7ee0c3; }
+  pre { background: #0b0f14; border: 1px solid #26303d; border-radius: 10px; padding: 10px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; font-size: 12px; max-height: 320px; overflow-y: auto; }
+  #log { margin-top: 14px; }
+  .step { color: #9ca3af; font-size: 12px; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>Kirim 500 mock USDC (Testnet)</h1>
+  <p class="step">Hyperliquid Testnet &middot; aksi L1 <span class="mono">usdSend</span> &middot; tanpa seed / private key</p>
+
+  <div class="warn">
+    <b>Baca dulu:</b> halaman ini TIDAK PERNAH meminta seed phrase atau private key.
+    Yang diminta hanya <b>satu tanda tangan (signature)</b> di wallet kamu sendiri, lalu
+    tanda tangan itu dikirim ke API resmi Hyperliquid Testnet. Kalau ada apa pun yang
+    meminta seed/private key, itu penipuan — tutup halaman ini.
+    <br><br>
+    Ini <b>uang latihan (mock USDC testnet, nilainya Rp0)</b>, bukan uang asli.
+    Jumlah dan alamat tujuan sudah dikunci di halaman ini dan tidak bisa diubah.
+  </div>
+
+  <h2>Ringkasan transfer</h2>
+  <div class="row"><span>Dari (wallet kamu)</span><span class="mono" id="fromAddr">0x27a02fd31fc28573f3dabb8273436406bab5c676</span></div>
+  <div class="row"><span>Ke (wallet lab)</span><span class="mono">0x4C4213A94923C93BDB69225e9C973441B265823D</span></div>
+  <div class="row"><span>Jumlah</span><span><b>500 mock USDC</b> (testnet)</span></div>
+  <div class="row"><span>Jaringan</span><span>Hyperliquid Testnet</span></div>
+  <div class="row"><span>Biaya</span><span>Rp0 (tanda tangan, tanpa gas)</span></div>
+
+  <h2>Langkah 1 — Connect wallet</h2>
+  <p class="step">Pilih salah satu. WalletConnect akan membuka daftar wallet / QR — pilih wallet kamu (mis. OKX / MetaMask), lalu approve koneksi di aplikasi wallet.</p>
+  <button class="primary" id="btnWc">Connect via WalletConnect</button>
+  <button class="ghost" id="btnInjected" style="display:none">Gunakan wallet browser ini (terdeteksi)</button>
+  <button class="ghost" id="btnDisconnect" style="display:none">Disconnect</button>
+  <div id="accountBox" style="display:none; margin-top:10px;" class="ok"></div>
+
+  <h2>Langkah 2 — Periksa &amp; kirim</h2>
+  <p class="step">Setelah connect, halaman memeriksa alamat wallet kamu harus sama dengan alamat pengirim di atas. Baru setelah itu tombol kirim aktif.</p>
+  <button class="primary" id="btnSend" disabled>Kirim 500 mock USDC</button>
+  <button class="ghost" id="btnPing">Cek koneksi API testnet (tanpa tanda tangan)</button>
+
+  <details>
+    <summary>Lihat data tanda tangan (EIP-712) yang akan diminta ke wallet</summary>
+    <pre id="typedPreview">— connect dulu, data akan tampil di sini —</pre>
+  </details>
+
+  <div id="log"></div>
+</div>
+
+<script type="importmap">
+{ "imports": { "@walletconnect/ethereum-provider": "https://cdn.jsdelivr.net/npm/@walletconnect/ethereum-provider@2.26.0/+esm" } }
+</script>
+
+<script type="module">
+import { EthereumProvider } from "@walletconnect/ethereum-provider";
+
+// ===== Konstanta — dikunci, jangan diubah =====
+const EXPECTED_SENDER = "0x27a02fd31fc28573f3dabb8273436406bab5c676";
+const DESTINATION     = "0x4C4213A94923C93BDB69225e9C973441B265823D";
+const AMOUNT          = "500"; // mock USDC, string persis seperti SDK Python
+const TESTNET_API     = "https://api.hyperliquid-testnet.xyz";
+const WC_PROJECT_ID   = "1f186dd3221f938c4e0b8c72c233a3be"; // Reown Project ID publik (milik user, dari Squeek Pixel ID)
+
+// ===== Elemen UI =====
+const $ = (id) => document.getElementById(id);
+const logBox = $("log");
+let provider = null;      // provider aktif (WalletConnect / injected)
+let providerKind = "";    // "walletconnect" | "injected"
+let account = null;
+
+function log(html, cls) {
+  const d = document.createElement("div");
+  if (cls) d.className = cls;
+  d.innerHTML = html;
+  logBox.prepend(d);
+}
+function logText(t) { log("<pre>" + t.replace(/</g, "&lt;") + "</pre>"); }
+
+// ===== Bangun typed data EIP-712 — SAMA PERSIS dengan hyperliquid-python-sdk =====
+// SDK: hyperliquid/utils/signing.py  sign_usd_transfer_action() ->
+//      sign_user_signed_action(action, USD_SEND_SIGN_TYPES, "HyperliquidTransaction:UsdSend")
+//   - action["signatureChainId"] = "0x66eee"  (= 421614, Arbitrum Sepolia)
+//   - action["hyperliquidChain"] = "Testnet"
+//   - domain: { name "HyperliquidSignTransaction", version "1", chainId 421614, verifyingContract 0x0 }
+//   - primaryType: "HyperliquidTransaction:UsdSend"
+//   - types: hyperliquidChain:string, destination:string, amount:string, time:uint64
+function buildTypedData(timeMs) {
+  return {
+    domain: {
+      name: "HyperliquidSignTransaction",
+      version: "1",
+      chainId: 421614,
+      verifyingContract: "0x0000000000000000000000000000000000000000",
+    },
+    types: {
+      "HyperliquidTransaction:UsdSend": [
+        { name: "hyperliquidChain", type: "string" },
+        { name: "destination", type: "string" },
+        { name: "amount", type: "string" },
+        { name: "time", type: "uint64" },
+      ],
+      EIP712Domain: [
+        { name: "name", type: "string" },
+        { name: "version", type: "string" },
+        { name: "chainId", type: "uint256" },
+        { name: "verifyingContract", type: "address" },
+      ],
+    },
+    primaryType: "HyperliquidTransaction:UsdSend",
+    message: {
+      destination: DESTINATION,
+      amount: AMOUNT,
+      time: timeMs,
+      type: "usdSend",
+      signatureChainId: "0x66eee",
+      hyperliquidChain: "Testnet",
+    },
+  };
+}
+
+// Payload POST — SAMA PERSIS dengan Exchange._post_action() di SDK Python:
+// { action, nonce, signature:{r,s,v}, vaultAddress: null, expiresAfter: null }
+function buildPayload(timeMs, sig) {
+  const r = "0x" + sig.slice(2, 66);
+  const s = "0x" + sig.slice(66, 130);
+  let v = parseInt(sig.slice(130, 132), 16);
+  if (v < 27) v += 27; // sebagian wallet mengembalikan v 0/1
+  return {
+    action: {
+      destination: DESTINATION,
+      amount: AMOUNT,
+      time: timeMs,
+      type: "usdSend",
+      signatureChainId: "0x66eee",
+      hyperliquidChain: "Testnet",
+    },
+    nonce: timeMs,
+    signature: { r, s, v },
+    vaultAddress: null,
+    expiresAfter: null,
+  };
+}
+
+function setConnected(addr, kind) {
+  account = addr;
+  providerKind = kind;
+  $("accountBox").style.display = "block";
+  $("accountBox").innerHTML = "Terhubung (" + kind + "): <span class='mono'>" + addr + "</span>";
+  $("btnDisconnect").style.display = "block";
+  $("btnWc").disabled = true;
+  $("btnInjected").disabled = true;
+  const ok = addr.toLowerCase() === EXPECTED_SENDER.toLowerCase();
+  if (ok) {
+    log("Alamat cocok dengan pengirim yang diharapkan. Tombol kirim aktif.", "ok");
+    $("btnSend").disabled = false;
+  } else {
+    log("ALAMAT TIDAK COCOK. Wallet yang terhubung (" + addr + ") bukan alamat pengirim yang diharapkan (" + EXPECTED_SENDER + "). Pengiriman diblokir — disconnect lalu connect wallet yang benar.", "err");
+    $("btnSend").disabled = true;
+  }
+  const preview = buildTypedData(Date.now());
+  $("typedPreview").textContent = JSON.stringify(preview, null, 2);
+}
+
+async function connectWalletConnect() {
+  log("Membuka WalletConnect…");
+  provider = await EthereumProvider.init({
+    projectId: WC_PROJECT_ID,
+    chains: [42161],
+    optionalChains: [421614, 1],
+    showQrModal: true,
+    rpcMap: {
+      42161: "https://arb1.arbitrum.io/rpc",
+      421614: "https://sepolia-rollup.arbitrum.io/rpc",
+    },
+    metadata: {
+      name: "Kirim Mock USDC — Hyperliquid Testnet",
+      description: "Kirim 500 mock USDC testnet ke wallet lab (aksi usdSend). Tanpa seed/private key.",
+      url: window.location.href.startsWith("http") ? window.location.href : "https://app.hyperliquid-testnet.xyz",
+      icons: [],
+    },
+    optionalMethods: ["eth_accounts", "eth_chainId", "eth_signTypedData_v4", "personal_sign", "eth_sendTransaction", "eth_sign"],
+    optionalEvents: ["accountsChanged", "chainChanged", "disconnect"],
+  });
+  provider.on("disconnect", () => { log("Wallet disconnect.", "err"); resetUi(); });
+  provider.on("accountsChanged", (accs) => { if (accs && accs[0]) setConnected(accs[0], "walletconnect"); });
+  await provider.enable();
+  const accs = await provider.request({ method: "eth_accounts", params: [] });
+  if (!accs || !accs[0]) throw new Error("Tidak ada alamat wallet yang terhubung.");
+  setConnected(accs[0], "walletconnect");
+  log("Connect WalletConnect berhasil.", "ok");
+}
+
+async function connectInjected() {
+  log("Memakai wallet injected di browser ini…");
+  provider = window.ethereum;
+  providerKind = "injected";
+  const accs = await provider.request({ method: "eth_requestAccounts", params: [] });
+  if (!accs || !accs[0]) throw new Error("Tidak ada alamat wallet yang terhubung.");
+  if (provider.on) {
+    provider.on("accountsChanged", (a) => { if (a && a[0]) setConnected(a[0], "injected"); });
+    provider.on("disconnect", () => { log("Wallet disconnect.", "err"); resetUi(); });
+  }
+  setConnected(accs[0], "injected");
+  log("Connect injected berhasil.", "ok");
+}
+
+function resetUi() {
+  provider = null; account = null;
+  $("accountBox").style.display = "none";
+  $("btnDisconnect").style.display = "none";
+  $("btnWc").disabled = false;
+  $("btnInjected").disabled = false;
+  $("btnSend").disabled = true;
+  $("btnSend").textContent = "Kirim 500 mock USDC";
+}
+
+async function sendMockUsdc() {
+  if (!provider || !account) { log("Belum connect wallet.", "err"); return; }
+  if (account.toLowerCase() !== EXPECTED_SENDER.toLowerCase()) { log("Alamat tidak cocok — diblokir.", "err"); return; }
+  $("btnSend").disabled = true;
+  $("btnSend").textContent = "Meminta tanda tangan…";
+  try {
+    const timeMs = Date.now(); // dipakai sebagai action.time SEKALIGUS nonce (sama seperti SDK)
+    const typedData = buildTypedData(timeMs);
+    $("typedPreview").textContent = JSON.stringify(typedData, null, 2);
+    log("Meminta tanda tangan EIP-712 ke wallet… (cek aplikasi wallet kamu)");
+    const sig = await provider.request({
+      method: "eth_signTypedData_v4",
+      params: [account, JSON.stringify(typedData)],
+    });
+    if (typeof sig !== "string" || sig.length !== 132) throw new Error("Tanda tangan tidak valid dari wallet: " + String(sig));
+    log("Tanda tangan diterima: <span class='mono'>" + sig.slice(0, 20) + "…</span>", "ok");
+    const payload = buildPayload(timeMs, sig);
+    $("btnSend").textContent = "Mengirim ke API testnet…";
+    log("POST " + TESTNET_API + "/exchange");
+    const res = await fetch(TESTNET_API + "/exchange", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    const data = await res.json().catch(() => ({ raw: "(bukan JSON)" }));
+    log("Jawaban API (mentah):");
+    logText(JSON.stringify(data, null, 2));
+    if (data && data.status === "ok") {
+      log("BERHASIL — 500 mock USDC terkirim ke wallet lab. Cek saldo lab beberapa detik lagi.", "ok");
+      $("btnSend").textContent = "Terkirim ✓";
+    } else {
+      log("API menolak / gagal. Lihat jawaban mentah di atas. Dana TIDAK berpindah kalau status bukan ok.", "err");
+      $("btnSend").disabled = false;
+      $("btnSend").textContent = "Coba kirim lagi";
+    }
+  } catch (e) {
+    log("Gagal: " + (e && e.message ? e.message : String(e)), "err");
+    $("btnSend").disabled = false;
+    $("btnSend").textContent = "Kirim 500 mock USDC";
+  }
+}
+
+async function pingApi() {
+  log("Cek koneksi API testnet (POST /info meta)…");
+  try {
+    const res = await fetch(TESTNET_API + "/info", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ type: "meta" }),
+    });
+    const data = await res.json();
+    const n = data && data.universe ? data.universe.length : "?";
+    log("API testnet menjawab OK — jumlah market perp: " + n, "ok");
+  } catch (e) {
+    log("Tidak bisa menghubungi API testnet: " + (e && e.message ? e.message : String(e)), "err");
+  }
+}
+
+$("btnWc").addEventListener("click", async () => {
+  try { await connectWalletConnect(); }
+  catch (e) { log("Connect gagal: " + (e && e.message ? e.message : String(e)), "err"); resetUi(); }
+});
+$("btnInjected").addEventListener("click", async () => {
+  try { await connectInjected(); }
+  catch (e) { log("Connect gagal: " + (e && e.message ? e.message : String(e)), "err"); resetUi(); }
+});
+$("btnDisconnect").addEventListener("click", async () => {
+  try { if (provider && provider.disconnect) await provider.disconnect(); } catch (e) {}
+  resetUi();
+  log("Disconnect.");
+});
+$("btnSend").addEventListener("click", sendMockUsdc);
+$("btnPing").addEventListener("click", pingApi);
+
+// Kalau halaman dibuka di dalam browser wallet (MetaMask/OKX in-app browser),
+// tawarkan koneksi langsung tanpa WalletConnect.
+if (window.ethereum) {
+  $("btnInjected").style.display = "block";
+  log("Wallet terdeteksi di browser ini — kamu bisa pakai tombol 'Gunakan wallet browser ini' atau tetap WalletConnect.");
+}
+log("Halaman siap. Langkah 1: connect wallet.");
+</script>
+</body>
+</html>
